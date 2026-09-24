@@ -702,7 +702,10 @@ model:
   max_history: null         # 递归层历史预留；null = 自动跟随草稿长度（必须留够，见第 12 节）
   load_vision: true         # 不需要图片就设 false，省约 0.7 GB
   mtp_draft: true           # MTP 投机解码（加速，默认开）
-  draft_model: null         # 外部草稿模型目录（DFlash2），设置后优先于 MTP；见第 13 节
+  # ★ 当前**已启用** DFlash2（优先于 MTP）。想退回 MTP 就设为 null，或用
+  #   config.mtp-cq4.yaml（那份就是这个设置）。详见第 13 节。
+  #   注意它多占约 2.0 GiB 显存，且跑过请求后空闲余量会降到 0.8 GiB 以下（见 config.yaml 注释）
+  draft_model: models/DFlash2-EXL3-4.00bpw
   tensor_parallel: false    # 单卡保持 false；双卡拼显存可开
 
 defaults:                   # 采样默认值，请求里可覆盖

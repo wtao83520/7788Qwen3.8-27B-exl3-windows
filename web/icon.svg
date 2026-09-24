@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Qwen3.8-27B 控制面板">
+  <title>Qwen3.8-27B 控制面板</title>
+  <defs>
+    <!-- 背景渐变取自面板主题的 bg-soft2 → bg 两色，放在浅色/深色标签栏里都不刺眼。
+         ★ 注意：XML 注释里**不能出现连续两个减号**，所以这里不能照抄 CSS 变量名
+         （写成两个减号开头会让整个 SVG 解析失败，浏览器只显示"图片损坏"）。 -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2330"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <!-- 描边那点渐变让 16px 下也不显得是一坨死蓝 -->
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#79b8ff"/>
+      <stop offset="1" stop-color="#58a6ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="2.5" y="2.5" width="59" height="59" rx="13.5" fill="url(#bg)" stroke="#2b3441" stroke-width="1.5"/>
+
+  <!-- 主体：一个「Q」= 圆环 + 尾巴。用纯几何形状而不是字体，
+       避免不同系统字体渲染不一致，小尺寸下也稳定。 -->
+  <g fill="none" stroke="url(#ink)" stroke-width="6.4" stroke-linecap="round">
+    <circle cx="31" cy="28" r="12.8"/>
+    <path d="M40.9 37.9 L49 48"/>
+  </g>
+
+  <!-- 右上角一个绿色小点：和面板「运行中」指示灯同色，暗示这是控制台。
+       外面套一圈背景色，避免贴到圆角边框上显脏。 -->
+  <circle cx="50.5" cy="13.5" r="7.2" fill="#0d1117"/>
+  <circle cx="50.5" cy="13.5" r="4.6" fill="#3fb950"/>
+</svg>

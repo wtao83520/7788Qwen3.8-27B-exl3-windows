@@ -1,0 +1,203 @@
+# ===========================================================================
+# Qwen3.8-27B (EXL3) OpenAI 兼容推理服务配置
+# ---------------------------------------------------------------------------
+# 目标硬件：RTX 4090 24GB / 模型 3.50bpw（权重约 14.3 GiB）
+#
+# 显存预算（单路并发，整套缓存都给一个请求）：
+#   14.3 GiB (权重) + 4.0 GiB (KV, 262144 tokens @ 4bit) + 约 1.5 GiB (激活/上下文)
+#   ≈ 19.8 GiB，24GB 卡可行
+#
+# KV 开销：该模型 64 层里只有 16 层是全注意力，每 token 共 32768 个 K/V 元素，
+#   所以 fp16 约 64 KiB/token，4bit 约 16 KiB/token。不同上下文长度下：
+#   max_seq_len   32768  -> 约 2.0 GB (16bit) / 0.5 GB (4bit)
+#   max_seq_len   65536  -> 约 4.0 GB (16bit) / 1.0 GB (4bit)
+#   max_seq_len  131072  -> 约 8.0 GB (16bit) / 2.0 GB (4bit)
+#   max_seq_len  262144  -> 约 16.0 GB (16bit) / 4.0 GB (4bit)  ← 24GB 卡必须 cache_quant=4
+#   参考：cache_quant=8 时 262144 需要 8 GiB，14.3 + 8 + 1.5 = 23.8 GiB，会 OOM
+# ===========================================================================
+
+server:
+  host: 0.0.0.0
+  port: 2345
+  # 留空 = 不校验鉴权。填了之后客户端需带 Authorization: Bearer <key>
+  api_keys: []
+  # 允许控制面板（或任何本机程序）通过 POST /admin/shutdown 让服务优雅退出。
+  # 只接受回环地址（127.0.0.1）的请求，所以局域网机器关不掉它。
+  # 想彻底关掉这个入口就设为 false（面板就只剩强制结束可用）。
+  allow_shutdown: true
+  # 允许跨域的来源，["*"] 表示全部放行
+  cors_origins:
+    - "*"
+
+model:
+  # EXL3 模型目录（由 download_model.py 下载到这里）
+  path: models/Qwen3.8-27B-3.50bpw
+  # 对外暴露的模型名（/v1/models 返回的 id）；null = 用目录名
+  name: null
+  # 主设备；开启张量并行时它是主卡的 cuda 索引
+  device: cuda:0
+  # 张量并行：把模型切到多张卡上（单卡 4090 请保持 false）
+  tensor_parallel: false
+  # 张量并行时每张卡可用显存(GB)，如 [22, 22]；null = 自动按剩余显存切分
+  use_per_device: null
+  # 张量并行时每张卡预留显存(GB)，如 [1, 1]；填负数表示该卡不参与
+  reserve_per_device: null
+  # 缓存 token 总预算（并发请求共享，不是每个请求一份）。
+  # 硬上限 262144（模型 max_position_embeddings），设更大没有意义。
+  # 该模型 64 层里只有 16 层全注意力，KV 约 64 KiB/token：
+  #   262144 tokens ≈ fp16 16 GiB / 8bit 8 GiB / 4bit 4 GiB
+  # 3.50bpw 权重约 14.3 GiB + 激活/上下文约 1.5 GiB。
+  # 当前为「单路并发」配置，整个缓存都给一个请求：
+  #   262144 + cache_quant 4 → 14.3 + 4.3 + 1.5 ≈ 20.1 GiB（24GB 卡可行）
+  #   不要用 cache_quant 8：8 + 15.8 = 23.8 GiB，会 OOM
+  # 若要改回多路并发，请同时调小 max_seq_len 并调大 max_batch_size
+  max_seq_len: 262144
+  # 并发批大小。单路并发设为 1（显存全给一个请求，延迟最低）
+  max_batch_size: 1
+  # prefill 分块大小：调小可减少新请求插入时对进行中请求的打断，也降低显存峰值
+  max_chunk_size: 2048
+  # 递归层（线性注意力）的历史预留。null = 自动跟随草稿模型长度。
+  # 这个值不能没想清楚就设 0：开启投机解码时，验证草稿 token 的那一步需要
+  # 递归状态形状为 [slots, max_history + 1, ...]，留 0 会直接报
+  # 「recurrent_state must be [num_slots, max_history + 1, ...]」。
+  max_history: null
+  # KV 缓存量化位数：16(不量化) / 8 / 6 / 4。
+  # 这是 K/V 的缺省位数；下面两个若填了，就以它们为准（可做非对称量化）。
+  cache_quant: 4
+  # 单独指定 K / V 的位数（null = 跟随 cache_quant）。
+  #
+  # 实测结论（4090 24GB / 3.50bpw / MTP / 262144 上下文，用 bench_kv.py 测得）：
+  #   K4/V4   KV 4.0 GiB   余量 4.02 GiB   解码 170 tok/s   prefill 2005
+  #   K8/V4   KV 6.0 GiB   余量 1.90 GiB   解码 143 tok/s   prefill 1659
+  #   K8/V8   KV 8.0 GiB   余量 0.42 GiB   → 严重换页，连 /health 都超时，不可用
+  # 在「长文检索」上 K4/V4 与 K8/V4 完全打平（同长度、同题目）：
+  #   单针  55K   4/4 vs 4/4
+  #   多针  55K   8/8 vs 8/8
+  #   多针 113K   8/8 vs 8/8
+  # 也就是说在 262144 上下文下抬高 K 精度换不到可测量的检索质量，却要多占 2 GiB
+  # 显存（安全余量减半）并慢约 16%。所以这里保持对称 4bit。
+  #
+  # 注意：检索测试不等于全面质量评估，它测不出长文生成连贯性、精确数值推理、
+  # 非拉丁文字这几类退化。若在这些场景发现问题，可对比 config.k8v4.yaml。
+  # 另外如果不需要 262144 上下文，8bit 在 131072 下 KV 也只有 4 GiB，
+  # 余量比现在的 K8/V4@262144 更宽松——那是更划算的 8bit 方案。
+  cache_k_bits: null
+  cache_v_bits: null
+  # 是否加载视觉塔（本模型是多模态 image-text-to-text，支持图片输入）
+  load_vision: true
+  # 投机解码：使用模型自带的 MTP 层（推荐，不需要额外下载草稿模型）
+  mtp_draft: true
+  # 外部草稿模型目录，设置后**优先于 MTP**；null = 不用。
+  #
+  # 可用的是 DFlash2（block-diffusion 草稿，官方 Qwen3.8-27B 对应版本）。设置后
+  # 服务会识别为 dflash_draft，draft_kind 变成 "dflash"，草稿窗口 = block_size-1 = 7。
+  #
+  # 实测校验（2026-09，本机 exllamav3 1.5.1，用 _bench/draft_check.py 离线跑的）：
+  #   模型目录                                    大小    结果
+  #   models/DFlash2-EXL3-4.00bpw                1.08GiB  可用 ✅（平均 4.01 bpw）
+  #   models/DFlash2-EXL3-5.0bpw                 1.37GiB  可用 ✅（平均 5.41 bpw）
+  #   r0b0tlab/...-EXL3-4.00bpw                  1.2 GiB  不可用 ❌ 见下
+  #
+  # ⚠️ r0b0tlab 那份量化把 selector 码本存成了 candidate_selector.*_codebook.weight，
+  #    而上游 exllamav3 要的是**不带 .weight** 的裸名字（DFlash2Config 没有声明
+  #    get_tensor_name_fixes），加载时会直接
+  #      ValueError: Required tensor candidate_selector.predecessor_codebook not found
+  #    它要求换成 r0b0tlab/exllamav3 的 community 分支。用上游 pip 版的就别选它。
+  #    （官方 z-lab/incoai 的 bf16 版也是裸名字，能加载，但要占 3.6 GiB 显存。）
+  #
+  # ⚠️ 显存代价：草稿权重约 0.9 GiB，另外 DFlash2 验证时要开 GDN 递归层历史，
+  #    48 层 × 8 fp32 行 ≈ 1.22 GiB（不开草稿时只有 ~0.15 GiB），合计约 +2.0 GiB。
+  #    下面 cache_quant 那段的余量是按「不开草稿」算的，开之前请先把它减掉再判断：
+  #      cache_quant 4（KV 4.0 GiB）→ 余量约 2.9 GiB，偏紧
+  #      cache_quant 3（KV 3.0 GiB）→ 余量约 3.9 GiB，比较稳（r0b0tlab 在 24GB 3090
+  #      上跑 262144 用的就是 cq3）。3bit 是支持的，见 cache/quant.py 的 2..8 断言。
+  #
+  # 想试的话把下面改成：draft_model: models/DFlash2-EXL3-4.00bpw
+  #
+  # ★ 当前已启用 dflash（2026-09）。实测一档（262144 / cache_quant 4）：
+  #   加载 6.7s，整卡已用 21.58 GiB，启动后空闲 1.51 GiB，draft_kind=dflash，窗口 7
+  #   接受长度（简单 prompt）7.92 / 8，接受率 0.988
+  #
+  # ⚠️ 关于显存余量（2026-09 用 _bench/vram_probe.py 实测，修正早先的说法）：
+  #   · 1.51 GiB 是**刚启动**的数字。跑过请求后会降下来并稳定在一个地板，
+  #     地板高低取决于生成长度：生成上限 256 → 约 0.82 GiB；4096 → 约 0.14 GiB。
+  #   · 这不是泄漏：降到地板后就不动了（连跑 12~15 个请求不再下降），
+  #     是 PyTorch 缓存分配器为激活一次性预留。重启服务即恢复 1.51 GiB。
+  #   · ★ 那部分内存是**可回收的**，所以 nvidia-smi 的 free 低估了真实余量：
+  #     在 0.14 GiB 下跑 4096-token 生成 + 思考 + 工具调用实测均正常。
+  #   · 和「q8@262144 余 0.42 GiB 就不可用」不是一回事：那次是 KV 缓存
+  #     **永久占掉**的，无可回收；不要用同一个判据。
+  #   · 想要更宽松的余量就 cache_quant: 3（KV 4.0 → 3.0 GiB），
+  #     或者 draft_model: null 换回 MTP（省约 +2.0 GiB 的草稿开销）。
+  draft_model: models/DFlash2-EXL3-4.00bpw
+  # 加载时显示进度条
+  progressbar: true
+
+# ---------------------------------------------------------------------------
+# 默认采样参数：请求里没传时使用这些值；请求里传了就覆盖
+# ---------------------------------------------------------------------------
+defaults:
+  # Qwen3 官方推荐：思考模式 temperature=0.6 / top_p=0.95 / top_k=20
+  #               非思考模式 temperature=0.7 / top_p=0.8  / top_k=20
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  # 最小概率阈值，0 表示关闭
+  min_p: 0.0
+  # 重复惩罚，1.0 表示关闭
+  repetition_penalty: 1.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0
+  # 单次回复最多生成多少 token（请求里没传 max_tokens 时才用它）。
+  # 这里 32768 是「思考模式的下限」不是上限：reasoning_effort=xhigh 时思维链动辄
+  # 上万 token，4096 会在思考中途被截断，finish_reason=length 而正文是空的。
+  # 真正能生成的上限 = max_seq_len - prompt_tokens - 预留，超出会被自动收窄并打警告。
+  # 「预留」= 2 + 草稿长度：job 按 max_new_tokens + 1 + num_draft_tokens 算缓存页数，
+  # 前缀 token 再占一格。本模型开 MTP 时预留共 6，所以写 262144 也不会报错，
+  # 服务会自动收到 262144 - prompt - 6。
+  # 代价：万一模型不收敛，会一直生成到 32768 才停（约 170 tok/s → 约 3 分钟）。
+  # 想更宽松可以直接改大（如 65536），也可以让客户端自己在请求里指定。
+  max_tokens: 32768
+  # 单次请求 max_tokens 的硬上限。设 null = 不限制，交给上面的公式自动收窄，
+  # 这样单路并发时可以一直生成到 262144 - prompt - 预留 的顶值。
+  # 若设成具体数字（如 32768），请求里更大的 max_tokens 会被静默截断到该值
+  max_tokens_limit: null
+  # 随机种子，null 表示每次随机
+  seed: null
+  # 默认停止串（Qwen 模板自带结束符，一般不需要额外设置）
+  stop: []
+  # 非流式请求是否也返回 token 统计
+  include_usage: true
+
+# ---------------------------------------------------------------------------
+# 对话模板相关参数（Qwen3.8 特有）
+# ---------------------------------------------------------------------------
+chat_template:
+  # null = 使用模型目录下的 chat_template.jinja，也可填 exllamav3 内置模板名
+  name: null
+  # 传给 chat template 的变量，可在请求体里用同名顶层字段覆盖
+  vars:
+    # 是否开启思维链（思考模式）
+    enable_thinking: true
+    # 思考深度。合法值只有 xhigh / medium / low（传 high 会 400）。
+    # ★ 注意：它不是「思考 token 预算」，而是往 system 位置注入**一句提示词**，
+    #   属于软引导，模型可以不听；真正能硬限思考长度的只有 max_tokens。
+    #   xhigh → 要求仔细推敲/验证假设/考虑备选
+    #   medium → 模板里**没有对应分支，什么都不注入**，等于「不说」
+    #   low → 要求简短、直奔结论
+    # 实测（同问题/seeded）：xhigh 思维链 306 字符，medium 130，low 142
+    #   → xhigh 明显更长，但 medium 与 low 在简单问题上几乎无差别。
+    # 想真正不再思考，用 enable_thinking: false，比调这个干净。
+    reasoning_effort: xhigh
+    # 是否在历史消息里保留 <think> 内容
+    preserve_thinking: true
+
+# ---------------------------------------------------------------------------
+# 服务行为
+# ---------------------------------------------------------------------------
+limits:
+  # 同时处理的请求数上限。单路并发设为 1，超出会排队
+  # 想开并发请同时调大 model.max_batch_size 并调小 model.max_seq_len
+  max_concurrent_requests: 1
+  # 单请求 messages 中所有文本的字符数上限（粗略防滥用，null = 不限制）
+  max_prompt_chars: null

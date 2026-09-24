@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.8-27B 控制面板</title>
+
+<!-- 图标：SVG 放前面（现代浏览器会优先用，缩放到任意尺寸都清晰），
+     后面跟 .ico 兼容旧的收藏夹/任务栏固定。apple-touch-icon 给手机
+     「添加到主屏幕」用 —— 面板现在能局域网访问，手机上用得着。
+
+     ★ 那个 ?v=2 是缓存破坏参数：图标默认被浏览器缓存（服务端只发 no-cache，
+     靠 ETag 重校验，本来是安全的），但万一日后重生成图标后旧副本被卡住，
+     把 v 往上加一位就能强制刷新。改了图标就记得改这个数字。 -->
+<link rel="icon" type="image/svg+xml" href="/icon.svg?v=2">
+<link rel="icon" type="image/x-icon" href="/favicon.ico?v=2" sizes="16x16 32x32 48x48 64x64">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Qwen3.8 面板">
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --bg-soft2: #1c2330;
+    --border: #2b3441;
+    --fg: #e6edf3;
+    --fg-dim: #8b949e;
+    --fg-dimmer: #6b7280;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 20px 22px 40px;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+  /* 页头 logo：直接用 favicon 那份 SVG，两处保证一致 */
+  header .logo {
+    width: 30px; height: 30px; flex: none;
+    display: block; border-radius: 8px;
+  }
+  h1 { font-size: 19px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--fg-dim); font-size: 12.5px; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 13px; border-radius: 999px;
+    font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--bg-soft);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-dimmer); }
+  .pill.running { color: var(--green); border-color: #1f6f36; background: #0f2417; }
+  .pill.running .dot { background: var(--green); box-shadow: 0 0 7px var(--green); }
+  .pill.stopped { color: var(--fg-dim); }
+  .pill.stopped .dot { background: var(--fg-dimmer); }
+  .pill.loading, .pill.starting, .pill.stopping {
+    color: var(--yellow); border-color: #6b5518; background: #2a2008;
+  }
+  .pill.loading .dot, .pill.starting .dot, .pill.stopping .dot {
+    background: var(--yellow); animation: blink 1s ease-in-out infinite;
+  }
+  .pill.error { color: var(--red); border-color: #7a2420; background: #2a1210; }
+  .pill.error .dot { background: var(--red); box-shadow: 0 0 7px var(--red); }
+  @keyframes blink { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  .actions { display: flex; gap: 9px; flex-wrap: wrap; margin: 18px 0 20px; }
+  button {
+    font: inherit; font-weight: 600; font-size: 13.5px;
+    padding: 9px 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg);
+    transition: background .13s, border-color .13s, transform .07s;
+  }
+  button:hover:not(:disabled) { background: var(--bg-soft2); border-color: #3d4a5c; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: .38; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #388bfd; border-color: #388bfd; }
+  button.danger { background: #b62324; border-color: #b62324; color: #fff; }
+  button.danger:hover:not(:disabled) { background: #da3633; border-color: #da3633; }
+  button.warn { color: var(--yellow); border-color: #6b5518; }
+  button.ghost { background: transparent; }
+  .spinner {
+    display: inline-block; width: 12px; height: 12px; margin-right: 7px;
+    border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+    border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(186px, 1fr)); gap: 11px; }
+  .card {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 10px; padding: 13px 15px;
+  }
+  .card .k { color: var(--fg-dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 5px; }
+  .card .v { font-size: 16px; font-weight: 600; font-family: var(--mono); word-break: break-all; }
+  /* pre-line：访问地址卡片里的多个局域网 IP 是用 \n 拼的，不加这个会挤成一行 */
+  .card .v.small { font-size: 13px; font-weight: 500; white-space: pre-line; }
+  .card .v.dim { color: var(--fg-dim); }
+  .card .note { color: var(--fg-dimmer); font-size: 11.5px; margin-top: 4px; font-family: var(--mono); }
+
+  .section { margin-top: 26px; }
+  .section > h2 {
+    font-size: 14px; font-weight: 600; margin: 0 0 11px;
+    color: var(--fg-dim); text-transform: uppercase; letter-spacing: .6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .section > h2 .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .section > h2 button { padding: 5px 12px; font-size: 12.5px; }
+
+  .bar { height: 7px; border-radius: 4px; background: #0b0f14; overflow: hidden; margin-top: 7px; border: 1px solid #222b36; }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, #1f6feb, #58a6ff); transition: width .4s; }
+  .bar.hot > i { background: linear-gradient(90deg, #da3633, #f85149); }
+
+  #logs {
+    background: #080b0f; border: 1px solid var(--border); border-radius: 10px;
+    height: 380px; overflow-y: auto; overflow-x: hidden; padding: 11px 13px;
+    font-family: var(--mono); font-size: 12.3px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #logs .ln { display: flex; gap: 9px; }
+  #logs .tag { flex: none; color: #445061; user-select: none; }
+  #logs .msg { flex: 1; }
+  #logs .lvl-error .msg { color: #ff9d97; }
+  #logs .lvl-warn  .msg { color: #e3b341; }
+  #logs .lvl-info  .msg { color: #79c0ff; }
+  #logs .lvl-dim   .msg { color: var(--fg-dimmer); }
+  #logs .lvl-meta  .msg { color: var(--purple); }
+  #logs .empty { color: var(--fg-dimmer); }
+
+  /* API 接入地址：一行一个 base_url，右侧一键复制 */
+  .urlrow {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px 7px 12px; margin-bottom: 7px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft);
+  }
+  .urlrow .tag {
+    flex: none; min-width: 74px;
+    font-size: 11.5px; color: var(--fg-dim); letter-spacing: .3px;
+  }
+  .urlrow code {
+    flex: 1; font-family: var(--mono); font-size: 13.5px;
+    word-break: break-all; color: var(--fg);
+  }
+  .urlrow button { flex: none; padding: 4px 14px; font-size: 12.5px; }
+  /* 服务没在跑的时候地址仍然有效（就是客户端连不上），用灰色提示一下 */
+  .urlrow.down code { color: var(--fg-dim); }
+  #urlNote { color: var(--fg-dimmer); font-size: 11.5px; margin-top: 7px; font-family: var(--mono); }
+  #urlNote b { color: var(--fg-dim); font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table th, table td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #212a35; }
+  table th { color: var(--fg-dim); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; }
+  table td.k { color: var(--fg-dim); font-family: var(--mono); width: 46%; }
+  table td.v { font-family: var(--mono); }
+  table tr:last-child td { border-bottom: none; }
+  .on  { color: var(--green); }
+  .off { color: var(--fg-dimmer); }
+  .wrap-table { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+
+  #toasts { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 9px; z-index: 50; }
+  .toast {
+    background: var(--bg-soft2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 11px 15px; max-width: 400px; font-size: 13px;
+    box-shadow: 0 8px 22px rgba(0,0,0,.5); animation: slide .18s ease-out;
+  }
+  .toast.ok { border-left-color: var(--green); }
+  .toast.err { border-left-color: var(--red); }
+  .toast.warn { border-left-color: var(--yellow); }
+  .toast .t { font-weight: 600; margin-bottom: 3px; }
+  .toast .d { color: var(--fg-dim); font-size: 12.3px; word-break: break-word; }
+  @keyframes slide { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }
+
+  #result {
+    background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px;
+    padding: 13px 15px; font-size: 13px; white-space: pre-wrap;
+    font-family: var(--mono); max-height: 300px; overflow-y: auto; display: none;
+  }
+  label.chk { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--fg-dim); cursor: pointer; }
+  input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--fg-dim); font-size: 12.5px; }
+  summary:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header>
+  <img class="logo" src="/icon.svg?v=2" alt="" width="30" height="30">
+  <h1>Qwen3.8-27B 控制面板</h1>
+  <span id="pill" class="pill stopped"><span class="dot"></span><span id="pillText">读取中…</span></span>
+  <span class="sub" id="subline"></span>
+</header>
+
+<div class="actions">
+  <button id="btnStart" class="primary">启动服务</button>
+  <button id="btnStop" class="danger">停止服务</button>
+  <button id="btnRestart">重启服务</button>
+  <button id="btnSmoke" class="ghost">冒烟测试</button>
+  <button id="btnEnv" class="ghost">环境自检</button>
+  <button id="btnForce" class="warn ghost" title="跳过优雅退出，直接结束进程">强制停止</button>
+</div>
+
+<div class="grid">
+  <div class="card"><div class="k">推理服务</div><div class="v" id="cStatus">—</div><div class="note" id="cPort"></div></div>
+  <div class="card"><div class="k">运行时长</div><div class="v" id="cUptime">—</div></div>
+  <div class="card"><div class="k">进程 PID</div><div class="v small" id="cPids">—</div></div>
+  <div class="card"><div class="k">托管方式</div><div class="v small" id="cSupervisor">—</div></div>
+  <div class="card"><div class="k">访问地址</div><div class="v small" id="cAccess">—</div></div>
+  <div class="card"><div class="k">模型</div><div class="v small" id="cModel">—</div></div>
+  <div class="card"><div class="k">上下文 / KV</div><div class="v small" id="cCtx">—</div></div>
+  <div class="card"><div class="k">显存</div><div class="v" id="cVram">—</div><div class="bar" id="vramBar"><i style="width:0"></i></div></div>
+</div>
+
+<div class="section">
+  <h2>API 接入地址<span class="right">
+    <button class="ghost" id="btnCopyAllUrls">复制全部</button>
+  </span></h2>
+  <div id="urlBox"><div class="empty">等待状态…</div></div>
+  <div class="note" id="urlNote"></div>
+</div>
+
+<div class="section">
+  <h2>运行日志<span class="right">
+    <label class="chk"><input type="checkbox" id="hideHealth" checked>隐藏健康检查</label>
+    <label class="chk"><input type="checkbox" id="autoscroll" checked>自动滚动</label>
+    <button class="ghost" id="btnPanelLogs">切换面板日志</button>
+    <button class="ghost" id="btnClearLogs">清屏</button>
+  </span></h2>
+  <div id="logs"><div class="empty">等待日志…</div></div>
+</div>
+
+<div class="section">
+  <h2>执行结果<span class="right"><button class="ghost" id="btnCopyResult">复制</button></span></h2>
+  <div id="result"></div>
+</div>
+
+<div class="section">
+  <h2>生效配置</h2>
+  <div class="cols">
+    <div class="wrap-table"><table id="cfgModel"></table></div>
+    <div class="wrap-table"><table id="cfgRun"></table></div>
+  </div>
+</div>
+
+<details>
+  <summary>高级：启动选项</summary>
+  <div style="margin-top:11px; display:flex; gap:18px; flex-wrap:wrap; align-items:center;">
+    <label class="chk"><input type="checkbox" id="optNoVision">不加载视觉塔（-NoVision，省显存）</label>
+    <label class="chk">上下文覆盖 <input type="number" id="optSeqLen" placeholder="留空＝用 config" style="width:120px; background:var(--bg-soft); border:1px solid var(--border); color:var(--fg); padding:5px 8px; border-radius:6px; font-family:var(--mono)"></label>
+    <label class="chk">端口覆盖 <input type="number" id="optPort" placeholder="留空＝用 config" style="width:100px; background:var(--bg-soft); border:1px solid var(--border); color:var(--fg); padding:5px 8px; border-radius:6px; font-family:var(--mono)"></label>
+  </div>
+</details>
+
+<div id="toasts"></div>
+
+<!-- 只有服务端本机打开面板时才会回显令牌（局域网请求拿到的是 null），
+     所以这个块在局域网机器上看不到，不是 bug。 -->
+<div class="section" id="tokenBox" style="display:none">
+  <h2>面板令牌<span class="right">
+    <button class="ghost" id="btnRevealToken">显示</button>
+    <button class="ghost" id="btnCopyToken">复制含令牌的地址</button>
+  </span></h2>
+  <div class="card">
+    <div class="v small" id="cToken">—</div>
+    <div class="note" id="cTokenNote"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = { status: null, busy: false, logSource: 'service', es: null, buffer: [], cfgSig: null,
+                urlSig: null, panelToken: '', tokenRevealed: false };
+
+async function copyText(text, okMsg) {
+  // ★ navigator.clipboard 只在「安全上下文」里存在：https 或 localhost/127.0.0.1。
+  //   从局域网别的机器打开 http://192.168.31.67:8001 时它是 undefined —— 而
+  //   一键复制恰恰是局域网用户最需要的功能。所以必须留一条 execCommand 的退路：
+  //   临时插一个 textarea、选中、execCommand('copy')、再删掉。
+  //   （execCommand 已标记过时，但它是非安全上下文里唯一还能用的办法。）
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      toast(okMsg || '已复制', text, 'ok');
+      return;
+    }
+    legacyCopy(text);
+    toast(okMsg || '已复制', text, 'ok');
+  } catch (e) {
+    try {
+      legacyCopy(text);
+      toast(okMsg || '已复制', text, 'ok');
+    } catch (e2) {
+      toast('复制失败', '请手动选中文本复制', 'err');
+    }
+  }
+}
+
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  // 放在视口内但透明、尺寸为 0：position:fixed 避免页面被撑出滚动条，
+  // 同时不能 display:none（那样选不中，复制会得到空串）。
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '0';
+  ta.style.width = '1px';
+  ta.style.height = '1px';
+  ta.style.padding = '0';
+  ta.style.border = 'none';
+  ta.style.outline = 'none';
+  ta.style.boxShadow = 'none';
+  ta.style.background = 'transparent';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+
+  const sel = document.getSelection();
+  const saved = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  const ok = document.execCommand('copy');
+  document.body.removeChild(ta);
+
+  // 复原用户原来的选中区域，不然复制一下就把人家选好的文字弄没了
+  if (saved && sel) { sel.removeAllRanges(); sel.addRange(saved); }
+  if (!ok) throw new Error('execCommand copy failed');
+}
+
+// ── 面板访问令牌 ──────────────────────────────────────────────────────────
+// 面板用 --lan 启动后会监听 0.0.0.0，这时局域网来的请求改状态的接口都要令牌
+// （本机 127.0.0.1 不需要，所以本机用法和以前完全一样）。
+// 令牌来源优先级：地址里的 ?token=…  >  上次存下的  >  手工输入。
+const TOKEN_KEY = 'qwen38_panel_token';
+
+function initToken() {
+  const q = new URLSearchParams(location.search).get('token');
+  if (q) {
+    localStorage.setItem(TOKEN_KEY, q);
+    // 拿到就把地址栏里的令牌抹掉：不抹的话截图、浏览历史、发链接给别人时
+    // 都会顺手把管理权限一起送出去。
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+
+let PANEL_TOKEN = initToken();
+
+function askToken() {
+  const t = prompt(
+    '这个面板要求访问令牌（局域网访问已开启）。\n\n' +
+    '令牌在服务端的 _state/panel_token.txt，或在服务端本机打开面板时看底部。\n\n请输入令牌：',
+    PANEL_TOKEN
+  );
+  if (t && t.trim()) {
+    PANEL_TOKEN = t.trim();
+    localStorage.setItem(TOKEN_KEY, PANEL_TOKEN);
+    return true;
+  }
+  return false;
+}
+
+function toast(title, detail, kind = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.innerHTML = `<div class="t"></div><div class="d"></div>`;
+  el.querySelector('.t').textContent = title;
+  if (detail) el.querySelector('.d').textContent = detail;
+  $('toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s';
+                     setTimeout(() => el.remove(), 320); }, kind === 'err' ? 9000 : 4600);
+}
+
+function showResult(text, ok) {
+  const box = $('result');
+  box.style.display = 'block';
+  box.textContent = text;
+  box.style.borderColor = ok === true ? '#1f6f36' : ok === false ? '#7a2420' : 'var(--border)';
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  document.querySelectorAll('.actions button').forEach(b => { b.disabled = busy; });
+  if (busy) return;
+  // 松开忙碌状态后由 render() 按当前服务状态重新决定哪些按钮可点
+  if (state.status) render(state.status);
+}
+
+async function api(path, opts = {}, retry = true) {
+  // 每次都用原始的 opts 重新拼头，不要就地改 opts：401 后重试时要用新令牌
+  // 重新构造，否则重试依旧带着旧令牌。
+  const headers = new Headers(opts.headers || {});
+  if (PANEL_TOKEN) headers.set('X-Panel-Token', PANEL_TOKEN);
+  const r = await fetch(path, { ...opts, headers });
+  const text = await r.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch (e) { body = { detail: text }; }
+  if (r.status === 401 && body && body.need_token && retry && askToken()) {
+    return api(path, opts, false);
+  }
+  if (!r.ok) {
+    const msg = (body && (body.detail || body.error)) || r.statusText;
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return body;
+}
+
+function humanUptime(s) {
+  if (s == null) return '—';
+  s = Math.floor(s);
+  if (s < 60) return s + ' 秒';
+  if (s < 3600) return Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h + ' 小时 ' + m + ' 分';
+}
+
+const STATUS_TEXT = {
+  running: '运行中', stopped: '已停止', loading: '加载模型中',
+  starting: '启动中', stopping: '正在停止', error: '加载失败'
+};
+
+function setText(id, value) {
+  const el = $(id);
+  if (el.textContent !== value) el.textContent = value;
+}
+
+function setClass(id, value) {
+  const el = $(id);
+  if (el.className !== value) el.className = value;
+}
+
+function renderUrls(su, running) {
+  // base_url 只在切换配置 / 换端口时才变，签名没变就不重建 DOM，
+  // 否则每 2.5s 一次的状态刷新会把正在悬停/点击的按钮抽掉。
+  const sig = JSON.stringify(su);
+  if (sig === state.urlSig) {
+    document.querySelectorAll('#urlBox .urlrow').forEach(r => {
+      r.classList.toggle('down', !running);
+    });
+    return;
+  }
+  state.urlSig = sig;
+
+  const box = $('urlBox');
+  box.innerHTML = '';
+  const rows = [['本机', su.local]];
+  (su.lan || []).forEach(u => rows.push(['局域网', u]));
+
+  rows.forEach(([tag, url]) => {
+    const row = document.createElement('div');
+    row.className = 'urlrow' + (running ? '' : ' down');
+
+    const t = document.createElement('span');
+    t.className = 'tag';
+    t.textContent = tag;
+
+    const c = document.createElement('code');
+    // textContent 而不是 innerHTML：避免把地址里的字符当成标签解析
+    c.textContent = url;
+
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = '复制';
+    b.onclick = () => copyText(url, '已复制 base_url');
+
+    row.append(t, c, b);
+    box.appendChild(row);
+  });
+
+  const ends = Object.entries(su.ends || {}).map(([k, v]) => `${k} ${v}`).join(' · ');
+  $('urlNote').innerHTML = '';
+  const n1 = document.createElement('div');
+  n1.textContent = `上面就是填给客户端（LM Studio / 脚本）的 base_url，已含 /v1；端点：${ends}`;
+  const n2 = document.createElement('div');
+  n2.innerHTML = su.auth_required
+    ? '<b>需要鉴权</b>：请求头带 Authorization: Bearer &lt;config.yaml 里的 api_keys&gt;'
+    : '<b>无需鉴权</b>：config.yaml 的 server.api_keys 为空，直接请求即可';
+  $('urlNote').append(n1, n2);
+}
+
+function render(d) {
+  state.status = d;
+  const s = d.service;
+
+  setClass('pill', 'pill ' + s.status);
+  setText('pillText', STATUS_TEXT[s.status] || s.status);
+  setText('subline', `PID ${d.panel.pid} · 面板 :${location.port || 8001} · 服务 :${s.port}`);
+
+  setText('cStatus', STATUS_TEXT[s.status] || s.status);
+  setClass('cStatus', 'v ' + (s.status === 'running' ? 'on' : s.status === 'error' ? '' : 'dim'));
+  setText('cPort', `端口 ${s.port}${s.listening ? ' · 监听中' : ''}`);
+  setText('cUptime', humanUptime(s.uptime_s));
+  setText('cPids', s.pids.length ? s.pids.join(', ') : '—');
+  renderUrls(d.service.urls || {}, s.status === 'running');
+  // 访问地址：面板默认只本机可见，--lan 启动才会列出局域网地址（此时改状态需令牌）
+  const pu = (d.panel && d.panel.urls) || {};
+  if (d.panel && d.panel.exposed) {
+    const lan = (pu.lan || []).map(u => u.replace(/^http:\/\//, '').replace(/\/$/, ''));
+    setText('cAccess', (lan.length ? lan.join(' / ') : '局域网已开启（未探测到 IP）') +
+                      (d.panel.token_required ? '\n（当前这台机器需令牌）' : ''));
+  } else {
+    setText('cAccess', `仅本机 127.0.0.1:${(d.panel && d.panel.port) || 8001}`);
+  }
+
+  // 令牌块：只有服务端本机请求会拿到 d.panel.token（局域网请求是 null），
+  // 这是故意的 —— 否则 LAN 上任何人读一次 /api/status 就把令牌拿走了。
+  const tb = $('tokenBox');
+  if (d.panel && d.panel.token) {
+    tb.style.display = '';
+    state.panelToken = d.panel.token;
+    if (!state.tokenRevealed) setText('cToken', '••••••••••••••••••••••••');
+    else setText('cToken', d.panel.token);
+    const first = ((pu.lan || [])[0] || `http://127.0.0.1:${d.panel.port}/`);
+    setText('cTokenNote', `${first}?token=…   令牌可写在 ${d.panel.token_file || '_state/panel_token.txt'}`);
+  } else {
+    tb.style.display = 'none';
+  }
+  // 托管方式很重要：pm2 托管时「停止」走 pm2 stop（进程退出一瞬间会被自动拉起，
+  // 所以不能直接杀进程），而面板托管时走优雅退出。
+  const p = s.pm2;
+  setText('cSupervisor', s.supervisor === 'pm2'
+    ? `pm2 · ${p && p.status ? p.status : '?'}${p && p.restarts ? ' · 重启' + p.restarts + '次' : ''}`
+    : '控制面板');
+
+  const h = (s.health && s.health.body) || {};
+  setText('cModel', h.model || d.config.name || (d.config.path || '—').split('/').pop());
+  setClass('cModel', 'v small');
+
+  const bits = d.config.cache_quant >= 16 ? 'fp16' : (d.config.cache_quant + 'bit');
+  setText('cCtx', s.status === 'running'
+    ? `${(h.max_seq_len || d.config.max_seq_len || 0).toLocaleString()} tok · KV ${bits}`
+    : `${(d.config.max_seq_len || 0).toLocaleString()} tok · KV ${bits}`);
+
+  const g = d.gpu;
+  if (g) {
+    setText('cVram', `${g.used_gb} / ${g.total_gb} GB`);
+    const pct = Math.min(100, (g.used_gb / g.total_gb) * 100);
+    const bar = $('vramBar');
+    bar.querySelector('i').style.width = pct + '%';
+    setClass('vramBar', 'bar' + (pct > 92 ? ' hot' : ''));
+  } else {
+    setText('cVram', '不可用');
+  }
+
+  const hb = s.health && s.health.body;
+  let tip = '';
+  if (s.status === 'running' && hb) {
+    tip = `空闲 ${hb.gpu ? hb.gpu.vram_free_gb + ' GB' : '?'}` + (hb.gpu ? ` · ${hb.gpu.name}` : '');
+  } else if (s.status === 'error' && hb && hb.detail) {
+    tip = hb.detail;
+  }
+  if ($('cVram').title !== tip) $('cVram').title = tip;
+
+  $('btnStart').disabled = state.busy || s.status !== 'stopped';
+  $('btnStop').disabled = state.busy || s.status === 'stopped';
+  $('btnRestart').disabled = state.busy || s.status === 'stopped';
+  $('btnForce').disabled = state.busy || s.status === 'stopped';
+  $('btnSmoke').disabled = state.busy || s.status !== 'running';
+
+  renderConfig(d);
+}
+
+function row(k, v, cls) {
+  return `<tr><td class="k">${k}</td><td class="v ${cls || ''}">${v}</td></tr>`;
+}
+
+function onoff(v) {
+  return v ? '<span class="on">开启</span>' : '<span class="off">关闭</span>';
+}
+
+function renderConfig(d) {
+  // 配置基本不会变，而状态是每 2.5s 刷一次。不做比较就直接重写表格的话，
+  // 页面会周期性重建一大片 DOM（也会把用户正在选中的文字清掉），白白浪费。
+  const sig = JSON.stringify([d.config, d.panel.log_dir, d.gpu && d.gpu.name, d.gpu && d.gpu.util,
+                              d.gpu && d.gpu.apps, d.service.config_file]);
+  if (sig === state.cfgSig) return;
+  state.cfgSig = sig;
+
+  const c = d.config;
+  $('cfgModel').innerHTML =
+    row('模型目录', c.path || '—') +
+    row('上下文 max_seq_len', (c.max_seq_len || 0).toLocaleString()) +
+    row('批大小 max_batch_size', c.max_batch_size ?? '—') +
+    row('prefill 分块', c.max_chunk_size ?? '—') +
+    row('递归层历史 max_history', c.max_history == null ? '自动' : c.max_history) +
+    row('KV 量化 cache_quant', c.cache_quant >= 16 ? 'fp16' : c.cache_quant + ' bit') +
+    row('视觉塔 load_vision', onoff(c.load_vision)) +
+    row('MTP 投机解码', onoff(c.mtp_draft)) +
+    row('外部草稿模型', c.draft_model || '<span class="off">无</span>') +
+    row('张量并行', onoff(c.tensor_parallel));
+
+  const limit = c.max_tokens_limit == null ? '<span class="on">不限制</span>' : c.max_tokens_limit;
+  $('cfgRun').innerHTML =
+    row('默认 max_tokens', c.max_tokens ?? '—') +
+    row('max_tokens 硬上限', limit) +
+    row('思考模式默认', onoff(c.enable_thinking)) +
+    row('并发请求上限', c.concurrency ?? '—') +
+    row('允许远程关机', onoff(c.allow_shutdown)) +
+    row('服务配置文件', d.service.config_file) +
+    row('日志目录', d.panel.log_dir) +
+    row('GPU', d.gpu ? d.gpu.name : '—') +
+    row('GPU 占用率', d.gpu ? d.gpu.util + ' %' : '—') +
+    row('GPU 上的进程', d.gpu && d.gpu.apps.length
+      ? d.gpu.apps.map(a => `${a.name} (${a.pid})`).join('<br>') : '<span class="off">无</span>');
+}
+
+async function refresh() {
+  try {
+    render(await api('/api/status'));
+  } catch (e) {
+    $('pill').className = 'pill error';
+    $('pillText').textContent = '面板连接失败';
+    $('subline').textContent = e.message;
+  }
+}
+
+function levelClass(line) {
+  if (/\bERROR\b|Traceback|Exception|错误|失败/.test(line)) return 'lvl-error';
+  if (/\bWARNING\b|警告/.test(line)) return 'lvl-warn';
+  if (/\bINFO\b/.test(line)) return 'lvl-info';
+  return 'lvl-dim';
+}
+
+// 面板自己每 2.5s 会去探测一次 /health，如果不过滤，日志里就全是它自己发的探测记录，
+// 真正有用的启动日志会被冲掉。默认隐藏，需要时取消勾选即可看到全部。
+function isNoise(line) {
+  return $('hideHealth').checked && /"(GET|HEAD) \/health\b/.test(line);
+}
+
+function appendLog(src, line, raw) {
+  if (raw !== true) {
+    state.buffer.push([src, line]);
+    while (state.buffer.length > 2500) state.buffer.shift();
+  }
+  if (isNoise(line)) return;
+  renderOne(src, line);
+}
+
+function renderOne(src, line) {
+  const box = $('logs');
+  const empty = box.querySelector('.empty');
+  if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'ln ' + (src === 'meta' ? 'lvl-meta' : levelClass(line));
+  const tag = document.createElement('span');
+  tag.className = 'tag';
+  tag.textContent = src === 'meta' ? '⋯' : '│';
+  const msg = document.createElement('span');
+  msg.className = 'msg';
+  msg.textContent = line;
+  div.append(tag, msg);
+  box.appendChild(div);
+  while (box.childElementCount > 2500) box.removeChild(box.firstChild);
+  if ($('autoscroll').checked) box.scrollTop = box.scrollHeight;
+}
+
+function renderAll() {
+  $('logs').innerHTML = '';
+  // 注意这里也要过一遍 isNoise：只让 appendLog 过滤的话，一次重渲染（切换日志源、
+  // 勾选/取消勾选、页面初次加载）就会把被过滤掉的行又全部画回来。
+  const visible = state.buffer.filter(([, line]) => !isNoise(line));
+  if (!visible.length) {
+    $('logs').innerHTML = '<div class="empty">暂无日志</div>';
+    return;
+  }
+  visible.forEach(([src, line]) => renderOne(src, line));
+  $('logs').scrollTop = $('logs').scrollHeight;
+}
+
+function connectLogs() {
+  if (state.es) { state.es.close(); state.es = null; }
+  $('logs').innerHTML = '<div class="empty">连接日志流…</div>';
+  // EventSource 没法自定义请求头，令牌只能走查询串
+  const es = new EventSource('/api/logs/stream?source=' + state.logSource +
+                             (PANEL_TOKEN ? '&token=' + encodeURIComponent(PANEL_TOKEN) : ''));
+  state.es = es;
+  es.onmessage = ev => {
+    try {
+      const d = JSON.parse(ev.data);
+      appendLog(d.src, d.line);
+    } catch (e) {}
+  };
+  es.onerror = () => { /* EventSource 会自己重连 */ };
+}
+
+async function loadRecentLogs() {
+  try {
+    const r = await api('/api/logs?tail=300&source=' + state.logSource);
+    state.buffer = [];
+    (r.lines || []).forEach(line => state.buffer.push(['log', line]));
+    if (!state.buffer.length) {
+      $('logs').innerHTML = '<div class="empty">暂无日志' +
+        (r.exists === false ? '（文件还没生成，启动服务后就有了）' : '') + '</div>';
+      return;
+    }
+    renderAll();
+  } catch (e) {}
+}
+
+async function runAction(btnId, fn) {
+  const btn = $(btnId);
+  const old = btn.innerHTML;
+  setBusy(true);
+  btn.innerHTML = '<span class="spinner"></span>' + old;
+  try {
+    return await fn();
+  } finally {
+    btn.innerHTML = old;
+    setBusy(false);
+    await refresh();
+  }
+}
+
+$('btnStart').onclick = () => runAction('btnStart', async () => {
+  const q = new URLSearchParams();
+  if ($('optNoVision').checked) q.set('no_vision', 'true');
+  const seq = parseInt($('optSeqLen').value, 10);
+  if (seq > 0) q.set('max_seq_len', seq);
+  const pt = parseInt($('optPort').value, 10);
+  if (pt > 0) q.set('port', pt);
+  try {
+    const r = await api('/api/start?' + q.toString(), { method: 'POST' });
+    toast('启动中', `PID ${r.pid} · 端口 ${r.port}。首次加载要读权重进显存，约几秒到一分钟`, 'ok');
+    showResult(`启动成功\nPID : ${r.pid}\n端口: ${r.port}\n命令: ${(r.cmd || []).join(' ')}\n\n正在加载模型，看下方日志里的 “服务就绪”。`);
+  } catch (e) {
+    toast('启动失败', e.message, 'err');
+    showResult('启动失败：' + e.message, false);
+  }
+});
+
+$('btnStop').onclick = () => runAction('btnStop', async () => {
+  if (!confirm('确定要停止推理服务吗？\n（会先尝试优雅退出以释放显存）')) return;
+  try {
+    const r = await api('/api/stop', { method: 'POST' });
+    if (r.status === 'already_stopped') toast('本来就没在运行', null, 'warn');
+    else if (r.status === 'stopped') toast('已停止', (r.steps || []).join(' / '), 'ok');
+    else toast('停止未完成', r.detail, 'err');
+    showResult('停止结果：' + JSON.stringify(r, null, 2), r.status === 'stopped');
+  } catch (e) {
+    toast('停止失败', e.message, 'err');
+    showResult('停止失败：' + e.message, false);
+  }
+});
+
+$('btnForce').onclick = () => runAction('btnForce', async () => {
+  if (!confirm('强制停止会直接结束进程（taskkill /T /F），不做优雅清理。\n确定继续？')) return;
+  try {
+    const r = await api('/api/stop?graceful=false&force=true', { method: 'POST' });
+    toast(r.status === 'failed' ? '仍有残留进程' : '已强制停止',
+          (r.steps || []).join(' / ') || r.detail, r.status === 'failed' ? 'err' : 'ok');
+    showResult(JSON.stringify(r, null, 2), r.status !== 'failed');
+  } catch (e) { toast('失败', e.message, 'err'); }
+});
+
+$('btnRestart').onclick = () => runAction('btnRestart', async () => {
+  const q = new URLSearchParams();
+  if ($('optNoVision').checked) q.set('no_vision', 'true');
+  try {
+    const r = await api('/api/restart?' + q.toString(), { method: 'POST' });
+    if (r.status === 'restarted') {
+      toast('重启中', `新 PID ${r.start.pid}，正在重新加载权重`, 'ok');
+      showResult(JSON.stringify(r, null, 2));
+    } else {
+      toast('重启失败', r.detail || '停止阶段出错', 'err');
+      showResult(JSON.stringify(r, null, 2), false);
+    }
+  } catch (e) {
+    toast('重启失败', e.message, 'err');
+    showResult('重启失败：' + e.message, false);
+  }
+});
+
+$('btnSmoke').onclick = () => runAction('btnSmoke', async () => {
+  toast('正在测试', '发一个很小的请求，最多等 3 分钟');
+  try {
+    const r = await api('/api/smoke', { method: 'POST' });
+    if (r.ok) {
+      toast('推理正常', `${r.tokens} token / ${r.seconds}s = ${r.tok_per_s} tok/s`, 'ok');
+      showResult(`冒烟测试通过\n耗时      : ${r.seconds}s\n生成      : ${r.tokens} token\n速度      : ${r.tok_per_s} tok/s\nfinish    : ${r.finish_reason}\nusage     : ${JSON.stringify(r.usage)}\n\n回答：\n${r.text}`, true);
+    } else {
+      toast('测试失败', r.error || ('HTTP ' + r.status_code), 'err');
+      showResult('冒烟测试失败：\n' + (r.error || ''), false);
+    }
+  } catch (e) {
+    toast('测试失败', e.message, 'err');
+    showResult('冒烟测试失败：' + e.message, false);
+  }
+});
+
+$('btnEnv').onclick = () => runAction('btnEnv', async () => {
+  toast('正在自检', '运行 verify_env.py');
+  try {
+    const r = await api('/api/verify-env', { method: 'POST' });
+    toast(r.ok ? '环境自检通过' : '环境自检未通过', null, r.ok ? 'ok' : 'err');
+    showResult(r.output, r.ok);
+  } catch (e) {
+    toast('自检失败', e.message, 'err');
+    showResult('自检失败：' + e.message, false);
+  }
+});
+
+$('btnClearLogs').onclick = () => {
+  state.buffer = [];
+  $('logs').innerHTML = '<div class="empty">已清屏（服务端日志不受影响）</div>';
+};
+
+$('hideHealth').onchange = () => renderAll();
+
+$('btnPanelLogs').onclick = () => {
+  state.logSource = state.logSource === 'service' ? 'panel' : 'service';
+  $('btnPanelLogs').textContent = state.logSource === 'service' ? '切换面板日志' : '切回服务日志';
+  loadRecentLogs();
+  connectLogs();
+};
+
+$('btnCopyResult').onclick = async () => {
+  await copyText($('result').textContent, '已复制');
+};
+
+$('btnCopyAllUrls').onclick = async () => {
+  const su = (state.status && state.status.service && state.status.service.urls) || {};
+  const lines = [...(su.all || [])];
+  if (!lines.length) { toast('还没有地址', '等状态刷新一次', 'err'); return; }
+  await copyText(lines.join('\n'), `已复制 ${lines.length} 个地址`);
+};
+
+$('btnRevealToken').onclick = () => {
+  state.tokenRevealed = !state.tokenRevealed;
+  $('btnRevealToken').textContent = state.tokenRevealed ? '隐藏' : '显示';
+  if (state.status) render(state.status);
+};
+
+$('btnCopyToken').onclick = async () => {
+  const d = state.status || {};
+  const lan = ((d.panel && d.panel.urls && d.panel.urls.lan) || [])[0];
+  const url = `${lan || `http://127.0.0.1:${(d.panel && d.panel.port) || 8001}/`}?token=${state.panelToken || ''}`;
+  await copyText(url, '已复制带令牌的地址');
+};
+
+refresh().then(() => { loadRecentLogs(); connectLogs(); });
+setInterval(refresh, 2500);
+window.addEventListener('beforeunload', () => { if (state.es) state.es.close(); });
+</script>
+</body>
+</html>

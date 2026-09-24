@@ -1,0 +1,62 @@
+# ===========================================================================
+# 行尾与二进制处理
+# ---------------------------------------------------------------------------
+# 本机 core.autocrlf=true（Windows 安装的默认值），意味着提交时 CRLF→LF、
+# 检出时 LF→CRLF。这对源码是好事，但对**二进制文件是致命的**：git 靠
+# 「内容里有没有 NUL 字节」来判断文本/二进制，万一判断失误，autocrlf 会
+# 直接把 PNG/ICO 的字节改掉、破坏文件（而且往往是静默的，直到浏览器显示破图
+# 才会发现）。所以下面把二进制类型显式钉死，不依赖 git 的猜测。
+# ===========================================================================
+
+* text=auto
+
+# ---- 二进制：绝对不做行尾转换 -------------------------------------------
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.ico     binary
+*.icns    binary
+*.pdf     binary
+
+# 模型/张量文件（已被 .gitignore 排除，这里再声明一次，防止有人强行 add）
+*.safetensors binary
+*.bin         binary
+*.pt          binary
+*.pth         binary
+*.gguf        binary
+
+# 字体等
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+
+# ---- 文本：明确行尾 ------------------------------------------------------
+# PowerShell 脚本含中文，必须是 UTF-8 **带 BOM**（否则 PS 5.1 按 GBK 读会乱码
+# 并报一堆假的语法错误）。BOM 由 git 原样保留，这里只保证检出行尾是 CRLF。
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# shell 脚本（WSL / Git Bash）必须 LF，否则会报 bad interpreter
+*.sh   text eol=lf
+
+# 这些按 LF 存放，避免在 Windows 上产生无意义的整文件 diff
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.js   text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.svg  text eol=lf
+
+# ---- 展示相关 ------------------------------------------------------------
+# 图标这类由 make_icon.py 生成的二进制，不要尝试逐行 diff
+*.ico -diff
+*.png -diff
+
+# 第三方/生成文件在 GitHub 上不计入语言统计
+web/index.html linguist-vendored=false

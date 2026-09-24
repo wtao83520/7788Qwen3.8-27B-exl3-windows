@@ -1,0 +1,56 @@
+# virtualenv
+.venv/
+
+# model weights (large, reused across branches)
+models/
+
+# HF download cache
+.hf_cache/
+
+# downloaded wheels / source (setup scratch)
+_wheels/
+.src/
+.wheelcache/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# runtime logs and process state
+logs/
+*.log
+server.out
+server.err
+srv.out
+srv.err
+dl.out
+dl.err
+_srv.out
+_srv.err
+bootstrap.log
+
+# 面板 / pm2 的运行时状态（启动参数、评测中间结果）
+_state/
+_bench/*.out
+_bench/*.json
+
+# 图标生成/预览产物（make_icon.py 生成；下划线开头的不属于服务资源）
+web/_*.png
+
+# 编辑器 / 系统垃圾
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+*~
+
+# 合并冲突与备份残留
+*.orig
+*.rej
+*.bak
+
+# 环境变量文件（可能含密钥，绝不入库；需要就提交 .env.example）
+.env
+.env.*
+!.env.example

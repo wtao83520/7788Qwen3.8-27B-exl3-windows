@@ -1,0 +1,21 @@
+# ---------------------------------------------------------------------------
+# torch 与 exllamav3 不在此文件中安装：它们必须版本匹配（CUDA / torch / Python
+# 三者要对上官方预编译 wheel 的名字）。请用 setup.ps1 自动完成，或参考 README.md。
+# ---------------------------------------------------------------------------
+
+# OpenAI 兼容 HTTP 服务
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+python-multipart>=0.0.12
+
+# 对话模板渲染（模型目录里的 chat_template.jinja 是 Jinja2 模板）
+Jinja2>=3.1
+
+# 配置与模型下载
+PyYAML>=6.0
+huggingface_hub>=0.26
+
+# 多模态（图片输入）与测试脚本
+pillow>=10.4
+requests>=2.32

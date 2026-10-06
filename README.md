@@ -500,13 +500,32 @@ print(resp.choices[0].message.content)
 | `top_p` | 0.95 | 核采样 |
 | `top_k` | 20 | 0 = 关闭 |
 | `min_p` | 0.0 | 最小概率阈值 |
-| `repetition_penalty` | 1.0 | 1.0 = 关闭 |
+| `repetition_penalty` | **1.05** | 1.0 = 关闭；本仓库已设 1.05，见下方说明 |
 | `presence_penalty` | 0.0 | |
 | `frequency_penalty` | 0.0 | |
 | `temperature_last` | false | 把温度放在 top_p/top_k 之后应用 |
 | `logit_bias` | — | `{"token_id": bias}`，非数字键忽略 |
-| `dry_multiplier` | 0.0 | DRY 重复抑制，>0 生效 |
+| `dry_multiplier` | 0.0 | DRY 重复抑制，>0 生效（只能在请求里传） |
 | `seed` | — | 固定随机种子（不保证完全确定性） |
+
+> **关于 `repetition_penalty`（2026-09 从 1.0 调到 1.05）**
+>
+> 复杂任务（长思维链 / 多轮 agent）里出现过模型复述同一段的死循环，所以把默认值抬到
+> `1.05`。这是个很轻的力度：再往上（`≥1.15`）模型会开始回避「已经出现过的词」，
+> 长文里表现为用词变怪、术语前后不一致。
+>
+> 两个实现细节值得知道：
+>
+> ① 它作用于**整个上下文**，不只是刚生成的部分。ExLlamaV3 的 `SS_RepP` 默认
+>    `sustain_range = 1e8`、`decay_range = 0`，而 `server.py` 构造 `ComboSampler`
+>    时没传这两个参数 → 惩罚范围 = 全部历史 token，**system prompt 和用户贴的
+>    代码片段里的词一样会被压**。能用是因为 1.05 本身足够温和，这个值是「力度」
+>    不是「窗口」。
+> ② 想只打「重复的短语/段落」而不是单个 token，`dry_multiplier` 更对症
+>    （查重复子串、按长度衰减，不碰 prompt 里出现过的词）。它目前只能在**请求里**
+>    传，`config.yaml` 的 `defaults` 不支持（要加得改 `server.py`）。
+>
+> 如果发现长文里回答开始「记不准」原文，先把 `repetition_penalty` 改回 1.0 对比。
 
 ### 输出控制
 

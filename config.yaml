@@ -144,8 +144,30 @@ defaults:
   top_k: 20
   # 最小概率阈值，0 表示关闭
   min_p: 0.0
-  # 重复惩罚，1.0 表示关闭
-  repetition_penalty: 1.0
+  # 重复惩罚（乘性），1.0 表示关闭：正 logits 除以它、负 logits 乘它
+  # （复刻 transformers generate() 的做法，见 arXiv:1909.05858）。
+  #
+  # ★ 2026-09 从 1.0 调到 1.05：复杂任务（长思维链 / 多轮 agent）里出现过
+  #   一直复述同一段的死循环。上面几项是 Qwen 官方推荐值，所以动这里。
+  #   1.05 是很轻的力度；再往上（≥1.15）模型会开始回避「已经出现过的词」，
+  #   长文里表现为用词变怪、术语前后不一致，反而更难用。
+  #
+  # ⚠️ 与 vLLM / transformers 的直觉不同，它作用于**整个上下文**，不只是刚生成的部分：
+  #   ExLlamaV3 的 SS_RepP 默认 sustain_range = 1e8、decay_range = 0，而 server.py
+  #   构造 ComboSampler 时没传这两个参数 → 惩罚范围 = 全部历史 token，
+  #   system prompt 和用户贴的代码片段里的词一样会被压。
+  #   之所以能用，是因为 1.05 本身足够温和；这个值是「力度」而不是「窗口」。
+  #
+  # 副作用与替代方案：
+  #   · 代价是长上下文检索 / 精确复述 prompt 原文可能略降 —— 1.05 下通常测不出来，
+  #     如果发现长文里回答开始「记不准」原文，先把这个值改回 1.0 对比。
+  #   · 想只打「重复的短语/段落」而不是单个 token，DRY 更对症：
+  #     请求里带 "dry_multiplier": 0.8（服务已支持，见 README 第 7 节）。
+  #     DRY 查的是重复子串并按长度衰减，不会打击 prompt 里出现过的词。
+  #     注意 DRY 目前只能在**请求里**传，defaults 里加它需要改 server.py。
+  #   · presence_penalty / frequency_penalty 也是 0：一个一次性、一个按次数累加，
+  #     都作用在整段上下文上，对复读不如 DRY，先不动。
+  repetition_penalty: 1.05
   presence_penalty: 0.0
   frequency_penalty: 0.0
   # 单次回复最多生成多少 token（请求里没传 max_tokens 时才用它）。
